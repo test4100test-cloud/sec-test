@@ -1,0 +1,37 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.4194,
+          37.7749
+        ]
+      },
+      "properties": {
+        "title": "<img src=x onerror=alert(document.domain)>",
+        "description": "<script>alert(1)</script>",
+        "marker-color": "#ff0000",
+        "name": "test<br onmouseover=alert(1)>xss",
+        "url": "javascript:alert(1)"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -73.9857,
+          40.7484
+        ]
+      },
+      "properties": {
+        "title": "<svg onload=alert(document.domain)>",
+        "description": "<iframe src=javascript:alert(1)></iframe>",
+        "name": "<details ontoggle=alert(1) open><summary>xss</summary></details>"
+      }
+    }
+  ]
+}
