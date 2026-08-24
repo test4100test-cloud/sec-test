@@ -1,0 +1,19 @@
+name: Security Token Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check-token:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test GITHUB_TOKEN scope
+        run: |
+          echo "=== Token Scope Test ==="
+          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/test4100test-cloud/private-secret-test 2>&1 | head -20
+          echo "---"
+          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/test4100test-cloud/private-secret-test/contents/README.md 2>&1 | head -20
+          echo "---"
+          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/user/repos?type=all 2>&1 | head -50
+          echo "--- ENV ---"
+          env | grep -iE "github|token|secret|key|auth" | sort
