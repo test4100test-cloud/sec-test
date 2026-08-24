@@ -1,0 +1,4 @@
+Name,Description,Link,Formula
+"<img src=x onerror=alert(1)>","<script>alert(1)</script>","<a href=javascript:alert(1)>xss</a>","=cmd|/C calc|!A1"
+"normal","safe value","https://example.com","=1+1"
+"<svg onload=alert(1)>","<iframe src=javascript:alert(1)>","<details ontoggle=alert(1) open>","=HYPERLINK(""http://evil.com"",""click"")"
